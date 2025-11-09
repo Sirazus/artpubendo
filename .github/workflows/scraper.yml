@@ -25,7 +25,7 @@ jobs:
           pip install requests beautifulsoup4
 
       - name: Ejecutar scraper
-        run: python pubmed_scraper.py
+        run: python scrap.py
 
       - name: Subir CSV como artefacto
         uses: actions/upload-artifact@v4
