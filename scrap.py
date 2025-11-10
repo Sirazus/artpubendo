@@ -6,6 +6,7 @@ import csv
 import re
 import os
 import hashlib
+import glob
 
 def clean_text(text):
     """Limpia el texto de caracteres problemáticos"""
@@ -112,7 +113,7 @@ def get_articles(start_date, end_date):
     
     return articulos
 
-def load_existing_articles(master_file='articulos.csv'):
+def load_existing_articles(master_file='data/articulos.csv'):
     """Carga los artículos existentes del archivo maestro"""
     existing_articles = {}
     if os.path.exists(master_file):
@@ -130,7 +131,7 @@ def load_existing_articles(master_file='articulos.csv'):
                 existing_articles[row['id']] = row
     return existing_articles
 
-def migrate_old_format(master_file='articulos.csv'):
+def migrate_old_format(master_file='data/articulos.csv'):
     """Migra archivos antiguos al nuevo formato con ID"""
     if not os.path.exists(master_file):
         return
@@ -165,7 +166,7 @@ def migrate_old_format(master_file='articulos.csv'):
         
         print("✅ Migración completada")
 
-def save_to_master(articles, master_file='articulos.csv'):
+def save_to_master(articles, master_file='data/articulos.csv'):
     """Guarda artículos en el archivo maestro, evitando duplicados"""
     # Primero migrar si es necesario
     migrate_old_format(master_file)
@@ -191,8 +192,34 @@ def save_to_master(articles, master_file='articulos.csv'):
     
     return len(new_articles)
 
+def cleanup_old_period_files(data_dir='data'):
+    """Elimina archivos de períodos anteriores, manteniendo solo el más reciente"""
+    if not os.path.exists(data_dir):
+        return
+    
+    # Buscar todos los archivos de período
+    period_files = glob.glob(os.path.join(data_dir, 'articulos_*_to_*.csv'))
+    
+    if not period_files:
+        return
+    
+    # Ordenar por fecha de modificación (más reciente primero)
+    period_files.sort(key=os.path.getmtime, reverse=True)
+    
+    # Mantener solo el más reciente, eliminar los demás
+    for old_file in period_files[1:]:
+        try:
+            os.remove(old_file)
+            print(f"🗑️  Eliminado archivo anterior: {os.path.basename(old_file)}")
+        except Exception as e:
+            print(f"❌ Error eliminando {old_file}: {e}")
+
 # Ejecutar y guardar resultados
 if __name__ == "__main__":
+    # Crear carpeta data si no existe
+    data_dir = 'data'
+    os.makedirs(data_dir, exist_ok=True)
+    
     # Obtener el rango de fechas según el día del mes
     start_date, end_date, period_name = get_date_range()
     
@@ -200,8 +227,11 @@ if __name__ == "__main__":
     
     resultados = get_articles(start_date, end_date)
     
-    # 1. Crear archivo específico del período
-    period_filename = f"articulos_{period_name}.csv"
+    # 1. Limpiar archivos de períodos anteriores
+    cleanup_old_period_files(data_dir)
+    
+    # 2. Crear archivo específico del período
+    period_filename = os.path.join(data_dir, f"articulos_{period_name}.csv")
     with open(period_filename, 'w', newline='', encoding='utf-8-sig') as f:
         fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -210,9 +240,12 @@ if __name__ == "__main__":
     
     print(f"✓ Archivo del período guardado: {period_filename}")
     
-    # 2. Agregar al archivo maestro
-    new_count = save_to_master(resultados)
+    # 3. Agregar al archivo maestro
+    master_file = os.path.join(data_dir, 'articulos.csv')
+    new_count = save_to_master(resultados, master_file)
     
     print(f"✓ Se encontraron {len(resultados)} artículos en este período")
     print(f"✓ Se agregaron {new_count} artículos nuevos al archivo maestro")
-    print(f"✓ Archivos guardados: {period_filename} y articulos.csv")
+    print(f"✓ Archivos guardados en carpeta 'data/':")
+    print(f"   - articulos_{period_name}.csv (período actual)")
+    print(f"   - articulos.csv (maestro acumulativo)")
