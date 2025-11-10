@@ -5,6 +5,9 @@ on:
     - cron: "0 7 1,15 * *"  # Ejecuta los días 1 y 15 de cada mes a las 07:00 UTC
   workflow_dispatch:         # permite lanzarlo manualmente desde GitHub
 
+permissions:
+  contents: write
+
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
@@ -12,6 +15,8 @@ jobs:
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -35,6 +40,7 @@ jobs:
             data/articulos.csv
           commit_user_name: GitHub Actions
           commit_user_email: actions@github.com
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Subir CSV como artefacto
         uses: actions/upload-artifact@v4
