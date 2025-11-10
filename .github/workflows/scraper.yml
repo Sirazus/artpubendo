@@ -2,10 +2,10 @@ name: Ejecutar scraper PubMed
 
 on:
   schedule:
-    - cron: "0 7 * * *"  # cada día a las 07:00 UTC
-  workflow_dispatch:      # permite lanzarlo manualmente desde GitHub
+    - cron: "0 7 1,15 * *"  # Ejecuta los días 1 y 15 de cada mes a las 07:00 UTC
+  workflow_dispatch:         # permite lanzarlo manualmente desde GitHub
 
-permissions:  # Agrega esta sección
+permissions:
   contents: write
 
 jobs:
@@ -35,12 +35,14 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add articulos.csv
-          git diff --quiet && git diff --staged --quiet || git commit -m "Actualizar artículos - $(date +'%Y-%m-%d %H:%M')"
+          git add articulos*.csv
+          git diff --quiet && git diff --staged --quiet || git commit -m "Actualizar artículos - $(date +'%Y-%m-%d')"
           git push
 
       - name: Subir CSV como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: articulos-csv
-          path: articulos.csv
+          path: |
+            articulos.csv
+            articulos_*.csv
