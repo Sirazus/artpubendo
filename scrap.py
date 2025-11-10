@@ -119,11 +119,57 @@ def load_existing_articles(master_file='articulos.csv'):
         with open(master_file, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             for row in reader:
+                # Manejar archivos antiguos sin 'id'
+                if 'id' not in row:
+                    # Generar ID para artículos antiguos
+                    row['id'] = generate_article_id(
+                        row.get('title', ''),
+                        row.get('journal', ''),
+                        row.get('date', '')
+                    )
                 existing_articles[row['id']] = row
     return existing_articles
 
+def migrate_old_format(master_file='articulos.csv'):
+    """Migra archivos antiguos al nuevo formato con ID"""
+    if not os.path.exists(master_file):
+        return
+    
+    with open(master_file, 'r', encoding='utf-8-sig') as f:
+        content = f.read()
+    
+    # Verificar si es formato antiguo (sin 'id')
+    if 'id' not in content.split('\n')[0]:
+        print("🔄 Migrando archivo antiguo al nuevo formato...")
+        
+        # Leer datos antiguos
+        articles = []
+        with open(master_file, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Agregar ID y fecha de scraping
+                row['id'] = generate_article_id(
+                    row.get('title', ''),
+                    row.get('journal', ''),
+                    row.get('date', '')
+                )
+                row['scraped_date'] = datetime.now().strftime("%Y-%m-%d")
+                articles.append(row)
+        
+        # Guardar en nuevo formato
+        with open(master_file, 'w', newline='', encoding='utf-8-sig') as f:
+            fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(articles)
+        
+        print("✅ Migración completada")
+
 def save_to_master(articles, master_file='articulos.csv'):
     """Guarda artículos en el archivo maestro, evitando duplicados"""
+    # Primero migrar si es necesario
+    migrate_old_format(master_file)
+    
     existing_articles = load_existing_articles(master_file)
     
     # Filtrar artículos nuevos
