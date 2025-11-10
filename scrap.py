@@ -1,9 +1,11 @@
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import csv
 import re
+import os
+import hashlib
 
 def clean_text(text):
     """Limpia el texto de caracteres problemáticos"""
@@ -15,16 +17,31 @@ def clean_text(text):
         return text.strip()
     return ""
 
-def get_articles():
-    # Definir fecha fija de inicio (1 de septiembre del año actual)
-    año_actual = datetime.now().year
-    fecha_inicio = f"{año_actual}/09/01"
-    hoy = datetime.now().strftime("%Y/%m/%d")
+def generate_article_id(title, journal, date):
+    """Genera un ID único para el artículo basado en título, revista y fecha"""
+    content = f"{title}_{journal}_{date}"
+    return hashlib.md5(content.encode()).hexdigest()
+
+def get_date_range():
+    """Calcula el rango de fechas para el día 1 o 15 del mes actual"""
+    today = datetime.now()
     
+    if today.day >= 15:
+        # Si estamos después del día 15, buscar desde día 15 hasta hoy
+        start_date = today.replace(day=15)
+        period_name = f"{start_date.strftime('%Y-%m-%d')}_to_{today.strftime('%Y-%m-%d')}"
+    else:
+        # Si estamos antes del día 15, buscar desde día 1 hasta hoy
+        start_date = today.replace(day=1)
+        period_name = f"{start_date.strftime('%Y-%m-%d')}_to_{today.strftime('%Y-%m-%d')}"
+    
+    return start_date.strftime("%Y/%m/%d"), today.strftime("%Y/%m/%d"), period_name
+
+def get_articles(start_date, end_date):
     # Construir URL con fechas dinámicas
     base_url = "https://pubmed.ncbi.nlm.nih.gov/"
     params = {
-        'term': f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ("{fecha_inicio}"[Date - Entry] : "{hoy}"[Date - Entry])',
+        'term': f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ("{start_date}"[Date - Entry] : "{end_date}"[Date - Entry])',
         'sort': 'date'
     }
     
@@ -59,6 +76,9 @@ def get_articles():
                     revista = clean_text(parts[0])
                     fecha = clean_text(parts[1].strip().split(';')[0] if len(parts) > 1 else '')
                     
+                    # Generar ID único
+                    article_id = generate_article_id(title, revista, fecha)
+                    
                     # Obtener abstract
                     time.sleep(1)  # Espera entre requests
                     art_response = session.get(link, headers=headers)
@@ -68,10 +88,12 @@ def get_articles():
                     abstract = clean_text(abstract_section.text.strip()) if abstract_section else "No abstract available"
                     
                     articulos.append({
+                        'id': article_id,
                         'title': title,
                         'journal': revista,
                         'date': fecha,
-                        'abstract': abstract
+                        'abstract': abstract,
+                        'scraped_date': datetime.now().strftime("%Y-%m-%d")
                     })
                     
                     print(f"Procesado: {title[:50]}...")
@@ -90,14 +112,61 @@ def get_articles():
     
     return articulos
 
+def load_existing_articles(master_file='articulos.csv'):
+    """Carga los artículos existentes del archivo maestro"""
+    existing_articles = {}
+    if os.path.exists(master_file):
+        with open(master_file, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                existing_articles[row['id']] = row
+    return existing_articles
+
+def save_to_master(articles, master_file='articulos.csv'):
+    """Guarda artículos en el archivo maestro, evitando duplicados"""
+    existing_articles = load_existing_articles(master_file)
+    
+    # Filtrar artículos nuevos
+    new_articles = [article for article in articles if article['id'] not in existing_articles]
+    
+    if not new_articles:
+        print("No hay artículos nuevos para agregar al archivo maestro")
+        return 0
+    
+    # Combinar existentes con nuevos
+    all_articles = list(existing_articles.values()) + new_articles
+    
+    # Guardar todo
+    with open(master_file, 'w', newline='', encoding='utf-8-sig') as f:
+        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_articles)
+    
+    return len(new_articles)
+
 # Ejecutar y guardar resultados
 if __name__ == "__main__":
-    resultados = get_articles()
+    # Obtener el rango de fechas según el día del mes
+    start_date, end_date, period_name = get_date_range()
     
-    # Guardar en CSV con encoding mejorado
-    with open('articulos.csv', 'w', newline='', encoding='utf-8-sig') as f:
-        writer = csv.DictWriter(f, fieldnames=['title', 'journal', 'date', 'abstract'])
+    print(f"Buscando artículos desde {start_date} hasta {end_date}")
+    
+    resultados = get_articles(start_date, end_date)
+    
+    # 1. Crear archivo específico del período
+    period_filename = f"articulos_{period_name}.csv"
+    with open(period_filename, 'w', newline='', encoding='utf-8-sig') as f:
+        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(resultados)
     
-    print(f"Se encontraron {len(resultados)} artículos. Guardados en articulos.csv")
+    print(f"✓ Archivo del período guardado: {period_filename}")
+    
+    # 2. Agregar al archivo maestro
+    new_count = save_to_master(resultados)
+    
+    print(f"✓ Se encontraron {len(resultados)} artículos en este período")
+    print(f"✓ Se agregaron {new_count} artículos nuevos al archivo maestro")
+    print(f"✓ Archivos guardados: {period_filename} y articulos.csv")
