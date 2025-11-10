@@ -3,6 +3,17 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import time
 import csv
+import re
+
+def clean_text(text):
+    """Limpia el texto de caracteres problemáticos"""
+    if text:
+        # Remover múltiples espacios y saltos de línea
+        text = re.sub(r'\s+', ' ', text)
+        # Remover caracteres problemáticos para CSV
+        text = text.replace('\n', ' ').replace('\r', ' ')
+        return text.strip()
+    return ""
 
 def get_articles():
     # Definir fecha fija de inicio (1 de septiembre del año actual)
@@ -39,14 +50,14 @@ def get_articles():
                 try:
                     # Extraer título y enlace
                     title_tag = art.find('a', class_='docsum-title')
-                    title = title_tag.text.strip()
+                    title = clean_text(title_tag.text.strip())
                     link = "https://pubmed.ncbi.nlm.nih.gov" + title_tag['href']
                     
                     # Extraer revista y fecha
                     journal_info = art.find('span', class_='docsum-journal-citation').text.strip()
                     parts = journal_info.split('.')
-                    revista = parts[0]
-                    fecha = parts[1].strip().split(';')[0] if len(parts) > 1 else ''
+                    revista = clean_text(parts[0])
+                    fecha = clean_text(parts[1].strip().split(';')[0] if len(parts) > 1 else '')
                     
                     # Obtener abstract
                     time.sleep(1)  # Espera entre requests
@@ -54,7 +65,7 @@ def get_articles():
                     art_soup = BeautifulSoup(art_response.text, 'html.parser')
                     
                     abstract_section = art_soup.find('div', class_='abstract-content')
-                    abstract = abstract_section.text.strip() if abstract_section else "No abstract available"
+                    abstract = clean_text(abstract_section.text.strip()) if abstract_section else "No abstract available"
                     
                     articulos.append({
                         'title': title,
@@ -62,6 +73,8 @@ def get_articles():
                         'date': fecha,
                         'abstract': abstract
                     })
+                    
+                    print(f"Procesado: {title[:50]}...")
                     
                 except Exception as e:
                     print(f"Error procesando artículo: {str(e)}")
@@ -73,6 +86,7 @@ def get_articles():
                 break
                 
             page += 1
+            print(f"Página {page} procesada")
     
     return articulos
 
@@ -80,8 +94,8 @@ def get_articles():
 if __name__ == "__main__":
     resultados = get_articles()
     
-    # Guardar en CSV
-    with open('articulos.csv', 'w', newline='', encoding='utf-8') as f:
+    # Guardar en CSV con encoding mejorado
+    with open('articulos.csv', 'w', newline='', encoding='utf-8-sig') as f:
         writer = csv.DictWriter(f, fieldnames=['title', 'journal', 'date', 'abstract'])
         writer.writeheader()
         writer.writerows(resultados)
