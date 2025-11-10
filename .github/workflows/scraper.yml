@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -28,16 +29,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4
 
+      - name: Sincronizar con remoto
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git pull --rebase origin main
+
       - name: Ejecutar scraper
         run: python scrap.py
 
-      - name: Commit y push de los cambios
+      - name: Commit cambios
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
           git add articulos*.csv
-          git diff --quiet && git diff --staged --quiet || git commit -m "Actualizar artículos - $(date +'%Y-%m-%d')"
-          git push
+          # Solo hacer commit si hay cambios
+          if git diff --staged --quiet; then
+            echo "No hay cambios para commit"
+          else
+            git commit -m "Actualizar artículos - $(date +'%Y-%m-%d %H:%M:%S')"
+          fi
+
+      - name: Push cambios
+        run: git push origin main
 
       - name: Subir CSV como artefacto
         uses: actions/upload-artifact@v4
