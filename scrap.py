@@ -65,87 +65,85 @@ def get_next_csv_number(csv_dir='data'):
     return max(numbers) + 1 if numbers else 1
 
 def get_articles(start_date, end_date):
-    """Obtiene artículos de PubMed - VERSIÓN SIMPLIFICADA COMO EL ORIGINAL"""
+    """Obtiene artículos de PubMed usando la API E-Utilities (JSON/XML)"""
+    base_search = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    base_fetch = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
     
-    # URL base como en el script original
-    base_url = "https://pubmed.ncbi.nlm.nih.gov/"
+    # Construir query (igual que antes)
+    query = f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ("{start_date}"[Date - Entry] : "{end_date}"[Date - Entry])'
+    print(f"🔍 Búsqueda API: {query}")
     
-    # Construir término de búsqueda como en el original
-    search_term = f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ("{start_date}"[Date - Entry] : "{end_date}"[Date - Entry])'
-    
-    print(f"🔍 Búsqueda: {search_term}")
-    
-    # Parámetros SIMPLES como en el original
-    params = {
-        'term': search_term,
-        'sort': 'date'
+    # Paso 1: obtener IDs de artículos
+    params_search = {
+        "db": "pubmed",
+        "term": query,
+        "retmax": 200,  # hasta 200 artículos por llamada
+        "retmode": "json"
     }
+    r = requests.get(base_search, params=params_search)
+    data = r.json()
     
-    # Headers SIMPLES como en el original
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    ids = data.get("esearchresult", {}).get("idlist", [])
+    print(f"📄 {len(ids)} artículos encontrados")
+    if not ids:
+        return []
+    
+    # Paso 2: obtener detalles de los artículos
+    params_fetch = {
+        "db": "pubmed",
+        "id": ",".join(ids),
+        "retmode": "xml"
     }
+    r = requests.get(base_fetch, params=params_fetch)
+    soup = BeautifulSoup(r.text, "xml")
     
     articulos = []
-    
-    with requests.Session() as session:
-        # Paginación - igual que el original
-        page = 1
-        while True:
-            params['page'] = page
-            response = session.get(base_url, params=params, headers=headers)
-            soup = BeautifulSoup(response.text, 'html.parser')
+    for article in soup.find_all("PubmedArticle"):
+        try:
+            title = clean_text(article.find("ArticleTitle").text)
             
-            articles = soup.find_all('article', class_='full-docsum')
-            if not articles:
-                break
-                
-            for art in articles:
-                try:
-                    # Extraer título y enlace - IGUAL QUE EL ORIGINAL
-                    title_tag = art.find('a', class_='docsum-title')
-                    title = clean_text(title_tag.text.strip())
-                    link = "https://pubmed.ncbi.nlm.nih.gov" + title_tag['href']
-                    
-                    # Extraer revista y fecha - IGUAL QUE EL ORIGINAL
-                    journal_info = art.find('span', class_='docsum-journal-citation').text.strip()
-                    parts = journal_info.split('.')
-                    revista = clean_text(parts[0])
-                    fecha = clean_text(parts[1].strip().split(';')[0] if len(parts) > 1 else '')
-                    
-                    # Generar ID único (NUEVO - para evitar duplicados)
-                    article_id = generate_article_id(title, revista, fecha)
-                    
-                    # Obtener abstract - IGUAL QUE EL ORIGINAL
-                    time.sleep(1)  # Espera entre requests
-                    art_response = session.get(link, headers=headers)
-                    art_soup = BeautifulSoup(art_response.text, 'html.parser')
-                    
-                    abstract_section = art_soup.find('div', class_='abstract-content')
-                    abstract = clean_text(abstract_section.text.strip()) if abstract_section else "No abstract available"
-                    
-                    articulos.append({
-                        'id': article_id,  # NUEVO campo
-                        'title': title,
-                        'journal': revista,
-                        'date': fecha,
-                        'abstract': abstract,
-                        'scraped_date': datetime.now().strftime("%Y-%m-%d")  # NUEVO campo
-                    })
-                    
-                    print(f"Procesado: {title[:50]}...")
-                    
-                except Exception as e:
-                    print(f"Error procesando artículo: {str(e)}")
-                    continue
+            # Abstract
+            abstract_tag = article.find("Abstract")
+            abstract = clean_text(" ".join(p.text for p in abstract_tag.find_all("AbstractText"))) if abstract_tag else "No abstract available"
             
-            # Verificar siguiente página - IGUAL QUE EL ORIGINAL
-            next_btn = soup.find('button', class_='next-page-btn')
-            if not next_btn or 'disabled' in next_btn.get('class', []):
-                break
-                
-            page += 1
-            print(f"Página {page} procesada")
+            # Journal
+            journal = clean_text(article.find("Title").text)
+            
+            # Fecha
+            date_tag = article.find("PubDate")
+            year = date_tag.find("Year").text if date_tag and date_tag.find("Year") else "n.d."
+            
+            # DOI
+            doi_tag = article.find("ArticleId", IdType="doi")
+            doi = doi_tag.text if doi_tag else "No DOI"
+            
+            # Autores
+            authors = []
+            for author in article.find_all("Author"):
+                lastname = author.find("LastName")
+                firstname = author.find("ForeName")
+                if lastname and firstname:
+                    authors.append(f"{firstname.text} {lastname.text}")
+                elif lastname:
+                    authors.append(lastname.text)
+            authors_str = "; ".join(authors) if authors else "No authors listed"
+            
+            # ID único
+            article_id = generate_article_id(title, journal, year)
+            
+            articulos.append({
+                "id": article_id,
+                "title": title,
+                "journal": journal,
+                "date": year,
+                "authors": authors_str,
+                "doi": doi,
+                "abstract": abstract,
+                "scraped_date": datetime.now().strftime("%Y-%m-%d")
+            })
+        except Exception as e:
+            print(f"⚠️ Error procesando artículo: {e}")
+            continue
     
     return articulos
 
