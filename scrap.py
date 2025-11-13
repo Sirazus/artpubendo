@@ -12,7 +12,9 @@ from calendar import monthrange
 def clean_text(text):
     """Limpia el texto de caracteres problemáticos"""
     if text:
+        # Remover múltiples espacios y saltos de línea
         text = re.sub(r'\s+', ' ', text)
+        # Remover caracteres problemáticos para CSV
         text = text.replace('\n', ' ').replace('\r', ' ')
         return text.strip()
     return ""
@@ -42,7 +44,7 @@ def get_date_range():
         end_date = datetime(current_year, current_month, 15)
         period_name = f"quincena_1_{current_year}-{current_month:02d}"
     
-    print(f"📅 Período REAL: {start_date.strftime('%Y-%m-%d')} a {end_date.strftime('%Y-%m-%d')}")
+    print(f"📅 Período: {start_date.strftime('%Y-%m-%d')} a {end_date.strftime('%Y-%m-%d')}")
     return start_date.strftime("%Y/%m/%d"), end_date.strftime("%Y/%m/%d"), period_name
 
 def get_next_csv_number(csv_dir='data'):
@@ -63,131 +65,122 @@ def get_next_csv_number(csv_dir='data'):
     return max(numbers) + 1 if numbers else 1
 
 def get_articles(start_date, end_date):
-    """Obtiene artículos de PubMed con headers mejorados"""
+    """Obtiene artículos de PubMed - VERSIÓN SIMPLIFICADA COMO EL ORIGINAL"""
+    
+    # URL base como en el script original
     base_url = "https://pubmed.ncbi.nlm.nih.gov/"
     
+    # Construir término de búsqueda como en el original
     search_term = f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ("{start_date}"[Date - Entry] : "{end_date}"[Date - Entry])'
     
     print(f"🔍 Búsqueda: {search_term}")
     
+    # Parámetros SIMPLES como en el original
     params = {
         'term': search_term,
-        'sort': 'date',
-        'size': 50
+        'sort': 'date'
     }
     
-    # Headers más realistas
+    # Headers SIMPLES como en el original
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
     articulos = []
     
     with requests.Session() as session:
-        session.headers.update(headers)
-        
-        try:
-            print("🌐 Realizando solicitud a PubMed...")
-            response = session.get(base_url, params=params, timeout=30)
-            print(f"📡 Status Code: {response.status_code}")
-            
-            if response.status_code != 200:
-                print(f"❌ Error HTTP {response.status_code}")
-                # Intentar una búsqueda más simple para diagnóstico
-                print("🔧 Probando búsqueda simplificada...")
-                test_params = {'term': 'endodontic', 'sort': 'date'}
-                test_response = session.get(base_url, params=test_params, timeout=30)
-                print(f"📡 Status Code (búsqueda test): {test_response.status_code}")
-                return articulos
-                
+        # Paginación - igual que el original
+        page = 1
+        while True:
+            params['page'] = page
+            response = session.get(base_url, params=params, headers=headers)
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Verificar si hay bloqueo o captcha
-            if "captcha" in response.text.lower() or "access denied" in response.text.lower():
-                print("🚫 Posible bloqueo por CAPTCHA o acceso denegado")
-                return articulos
-            
-            # Buscar artículos
             articles = soup.find_all('article', class_='full-docsum')
-            print(f"📖 Encontrados {len(articles)} artículos")
-            
             if not articles:
-                no_results = soup.find('div', class_='no-results-message')
-                if no_results:
-                    print("📭 No se encontraron resultados")
-                return articulos
-            
-            for i, art in enumerate(articles):
+                break
+                
+            for art in articles:
                 try:
-                    print(f"  📝 Procesando artículo {i+1}/{len(articles)}...")
-                    
-                    # Extraer título
+                    # Extraer título y enlace - IGUAL QUE EL ORIGINAL
                     title_tag = art.find('a', class_='docsum-title')
-                    if not title_tag:
-                        continue
-                        
                     title = clean_text(title_tag.text.strip())
                     link = "https://pubmed.ncbi.nlm.nih.gov" + title_tag['href']
                     
-                    # Extraer revista y fecha
-                    journal_info = art.find('span', class_='docsum-journal-citation')
-                    revista = "Desconocida"
-                    fecha = "Desconocida"
+                    # Extraer revista y fecha - IGUAL QUE EL ORIGINAL
+                    journal_info = art.find('span', class_='docsum-journal-citation').text.strip()
+                    parts = journal_info.split('.')
+                    revista = clean_text(parts[0])
+                    fecha = clean_text(parts[1].strip().split(';')[0] if len(parts) > 1 else '')
                     
-                    if journal_info:
-                        journal_text = journal_info.text.strip()
-                        parts = journal_text.split('. ')
-                        revista = clean_text(parts[0]) if parts else "Desconocida"
-                        fecha = clean_text(parts[1]) if len(parts) > 1 else "Desconocida"
-                    
-                    # Generar ID único
+                    # Generar ID único (NUEVO - para evitar duplicados)
                     article_id = generate_article_id(title, revista, fecha)
                     
-                    # Obtener abstract
-                    time.sleep(2)  # Espera más larga para evitar bloqueos
-                    abstract = "No abstract available"
+                    # Obtener abstract - IGUAL QUE EL ORIGINAL
+                    time.sleep(1)  # Espera entre requests
+                    art_response = session.get(link, headers=headers)
+                    art_soup = BeautifulSoup(art_response.text, 'html.parser')
                     
-                    try:
-                        art_response = session.get(link, timeout=30)
-                        if art_response.status_code == 200:
-                            art_soup = BeautifulSoup(art_response.text, 'html.parser')
-                            abstract_section = art_soup.find('div', class_='abstract-content')
-                            if abstract_section:
-                                abstract = clean_text(abstract_section.text.strip())
-                    except Exception as e:
-                        print(f"    ⚠️ Error obteniendo abstract: {e}")
+                    abstract_section = art_soup.find('div', class_='abstract-content')
+                    abstract = clean_text(abstract_section.text.strip()) if abstract_section else "No abstract available"
                     
                     articulos.append({
-                        'id': article_id,
+                        'id': article_id,  # NUEVO campo
                         'title': title,
                         'journal': revista,
                         'date': fecha,
                         'abstract': abstract,
-                        'scraped_date': datetime.now().strftime("%Y-%m-%d")
+                        'scraped_date': datetime.now().strftime("%Y-%m-%d")  # NUEVO campo
                     })
                     
-                    print(f"    ✅ {title[:50]}...")
+                    print(f"Procesado: {title[:50]}...")
                     
                 except Exception as e:
-                    print(f"    ❌ Error: {e}")
+                    print(f"Error procesando artículo: {str(e)}")
                     continue
-                    
-        except Exception as e:
-            print(f"❌ Error general: {e}")
+            
+            # Verificar siguiente página - IGUAL QUE EL ORIGINAL
+            next_btn = soup.find('button', class_='next-page-btn')
+            if not next_btn or 'disabled' in next_btn.get('class', []):
+                break
+                
+            page += 1
+            print(f"Página {page} procesada")
     
     return articulos
 
-# ... (el resto de las funciones se mantienen igual: load_existing_articles, migrate_old_format, save_to_master)
+def load_existing_articles(master_file='articulos_maestro/articulos.csv'):
+    """Carga los artículos existentes del archivo maestro"""
+    existing_articles = {}
+    if os.path.exists(master_file):
+        with open(master_file, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                existing_articles[row['id']] = row
+    return existing_articles
+
+def save_to_master(articles, master_file='articulos_maestro/articulos.csv'):
+    """Guarda artículos en el archivo maestro, evitando duplicados"""
+    existing_articles = load_existing_articles(master_file)
+    
+    # Filtrar artículos nuevos
+    new_articles = [article for article in articles if article['id'] not in existing_articles]
+    
+    if not new_articles:
+        print("No hay artículos nuevos para agregar al archivo maestro")
+        return 0
+    
+    # Combinar existentes con nuevos
+    all_articles = list(existing_articles.values()) + new_articles
+    
+    # Guardar todo
+    with open(master_file, 'w', newline='', encoding='utf-8-sig') as f:
+        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_articles)
+    
+    return len(new_articles)
 
 # Ejecutar y guardar resultados
 if __name__ == "__main__":
@@ -197,37 +190,32 @@ if __name__ == "__main__":
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(maestro_dir, exist_ok=True)
     
-    print(f"🕐 Fecha actual del sistema: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
     # Obtener el rango de fechas (quincenas completas)
     start_date, end_date, period_name = get_date_range()
     
-    print(f"🔍 Buscando artículos desde {start_date} hasta {end_date}")
+    print(f"Buscando artículos desde {start_date} hasta {end_date}")
     
     resultados = get_articles(start_date, end_date)
-    
-    print(f"📊 Total de artículos encontrados: {len(resultados)}")
     
     # 1. Crear archivo numerado articulos_X.csv en carpeta data/
     next_number = get_next_csv_number(data_dir)
     numbered_filename = os.path.join(data_dir, f"articulos_{next_number}.csv")
     
+    # Guardar archivo del período - como el original pero con encoding mejorado
     with open(numbered_filename, 'w', newline='', encoding='utf-8-sig') as f:
         fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        if resultados:
-            writer.writerows(resultados)
-            print(f"✅ Archivo numerado guardado: {numbered_filename} con {len(resultados)} artículos")
-        else:
-            print("⚠️ Archivo numerado creado vacío")
+        writer.writerows(resultados)
+    
+    print(f"✓ Archivo del período guardado: {numbered_filename}")
     
     # 2. Agregar al archivo maestro en carpeta articulos_maestro/
     master_file = os.path.join(maestro_dir, 'articulos.csv')
     new_count = save_to_master(resultados, master_file)
     
-    print(f"📈 Resumen final:")
-    print(f"   - Artículos encontrados: {len(resultados)}")
-    print(f"   - Nuevos en maestro: {new_count}")
-    print(f"   - Archivo numerado: {numbered_filename}")
-    print(f"   - Archivo maestro: {master_file}")
+    print(f"✓ Se encontraron {len(resultados)} artículos en este período")
+    print(f"✓ Se agregaron {new_count} artículos nuevos al archivo maestro")
+    print(f"✓ Archivos guardados:")
+    print(f"   - {numbered_filename} (período actual)")
+    print(f"   - {master_file} (maestro acumulativo)")
