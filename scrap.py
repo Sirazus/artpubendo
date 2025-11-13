@@ -66,11 +66,18 @@ def get_next_csv_number(csv_dir='data'):
     return max(numbers) + 1
 
 def get_articles(start_date, end_date):
-    # Construir URL con fechas dinámicas
+    # Construir URL con fechas dinámicas - FORMATO CORREGIDO
     base_url = "https://pubmed.ncbi.nlm.nih.gov/"
+    
+    # Término de búsqueda más flexible
+    search_term = f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ({start_date}[Date - Entry] : {end_date}[Date - Entry])'
+    
+    print(f"🔍 Búsqueda: {search_term}")
+    
     params = {
-        'term': f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ("{start_date}"[Date - Entry] : "{end_date}"[Date - Entry])',
-        'sort': 'date'
+        'term': search_term,
+        'sort': 'date',
+        'size': 100  # Aumentar número de resultados por página
     }
     
     headers = {
@@ -84,36 +91,66 @@ def get_articles(start_date, end_date):
         page = 1
         while True:
             params['page'] = page
-            response = session.get(base_url, params=params, headers=headers)
+            print(f"📄 Procesando página {page}...")
+            
+            try:
+                response = session.get(base_url, params=params, headers=headers, timeout=30)
+                response.raise_for_status()
+            except Exception as e:
+                print(f"❌ Error en la solicitud: {e}")
+                break
+                
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # Debug: mostrar contenido de la página
+            if page == 1:
+                results_info = soup.find('div', class_='results-amount')
+                if results_info:
+                    print(f"📊 Info resultados: {results_info.text.strip()}")
+            
             articles = soup.find_all('article', class_='full-docsum')
+            print(f"📖 Encontrados {len(articles)} artículos en la página {page}")
+            
             if not articles:
+                print("⏹️ No hay más artículos")
                 break
                 
             for art in articles:
                 try:
                     # Extraer título y enlace
                     title_tag = art.find('a', class_='docsum-title')
+                    if not title_tag:
+                        print("⚠️ No se encontró título")
+                        continue
+                        
                     title = clean_text(title_tag.text.strip())
                     link = "https://pubmed.ncbi.nlm.nih.gov" + title_tag['href']
                     
                     # Extraer revista y fecha
-                    journal_info = art.find('span', class_='docsum-journal-citation').text.strip()
-                    parts = journal_info.split('.')
-                    revista = clean_text(parts[0])
-                    fecha = clean_text(parts[1].strip().split(';')[0] if len(parts) > 1 else '')
+                    journal_info = art.find('span', class_='docsum-journal-citation')
+                    if journal_info:
+                        journal_text = journal_info.text.strip()
+                        parts = journal_text.split('.')
+                        revista = clean_text(parts[0])
+                        fecha = clean_text(parts[1].strip().split(';')[0] if len(parts) > 1 else '')
+                    else:
+                        revista = "Desconocida"
+                        fecha = "Desconocida"
                     
                     # Generar ID único
                     article_id = generate_article_id(title, revista, fecha)
                     
                     # Obtener abstract
                     time.sleep(1)  # Espera entre requests
-                    art_response = session.get(link, headers=headers)
-                    art_soup = BeautifulSoup(art_response.text, 'html.parser')
-                    
-                    abstract_section = art_soup.find('div', class_='abstract-content')
-                    abstract = clean_text(abstract_section.text.strip()) if abstract_section else "No abstract available"
+                    try:
+                        art_response = session.get(link, headers=headers, timeout=30)
+                        art_soup = BeautifulSoup(art_response.text, 'html.parser')
+                        
+                        abstract_section = art_soup.find('div', class_='abstract-content')
+                        abstract = clean_text(abstract_section.text.strip()) if abstract_section else "No abstract available"
+                    except Exception as e:
+                        print(f"⚠️ Error obteniendo abstract: {e}")
+                        abstract = "Error al obtener abstract"
                     
                     articulos.append({
                         'id': article_id,
@@ -124,19 +161,22 @@ def get_articles(start_date, end_date):
                         'scraped_date': datetime.now().strftime("%Y-%m-%d")
                     })
                     
-                    print(f"Procesado: {title[:50]}...")
+                    print(f"✅ Procesado: {title[:50]}...")
                     
                 except Exception as e:
-                    print(f"Error procesando artículo: {str(e)}")
+                    print(f"❌ Error procesando artículo: {str(e)}")
                     continue
             
             # Verificar siguiente página
             next_btn = soup.find('button', class_='next-page-btn')
             if not next_btn or 'disabled' in next_btn.get('class', []):
+                print("⏹️ No hay más páginas")
                 break
                 
             page += 1
-            print(f"Página {page} procesada")
+            if page > 10:  # Límite de seguridad
+                print("⚠️ Límite de páginas alcanzado")
+                break
     
     return articulos
 
@@ -230,9 +270,11 @@ if __name__ == "__main__":
     # Obtener el rango de fechas (quincenas completas)
     start_date, end_date, period_name = get_date_range()
     
-    print(f"Buscando artículos desde {start_date} hasta {end_date}")
+    print(f"🔍 Buscando artículos desde {start_date} hasta {end_date}")
     
     resultados = get_articles(start_date, end_date)
+    
+    print(f"📊 Total de artículos encontrados: {len(resultados)}")
     
     # 1. Crear archivo numerado articulos_X.csv en carpeta data/
     next_number = get_next_csv_number(data_dir)
@@ -242,16 +284,18 @@ if __name__ == "__main__":
         fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(resultados)
-    
-    print(f"✓ Archivo numerado guardado: {numbered_filename}")
+        if resultados:
+            writer.writerows(resultados)
+            print(f"✅ Archivo numerado guardado: {numbered_filename} con {len(resultados)} artículos")
+        else:
+            print("⚠️ Archivo numerado creado vacío")
     
     # 2. Agregar al archivo maestro en carpeta articulos_maestro/
     master_file = os.path.join(maestro_dir, 'articulos.csv')
     new_count = save_to_master(resultados, master_file)
     
-    print(f"✓ Se encontraron {len(resultados)} artículos en este período")
-    print(f"✓ Se agregaron {new_count} artículos nuevos al archivo maestro")
-    print(f"✓ Archivos guardados:")
-    print(f"   - {numbered_filename} (nuevo archivo numerado)")
-    print(f"   - {master_file} (maestro acumulativo)")
+    print(f"📈 Resumen final:")
+    print(f"   - Artículos encontrados en este período: {len(resultados)}")
+    print(f"   - Artículos nuevos agregados al maestro: {new_count}")
+    print(f"   - Archivo numerado: {numbered_filename}")
+    print(f"   - Archivo maestro: {master_file}")
