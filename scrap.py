@@ -173,7 +173,7 @@ def save_to_master(articles, master_file='articulos_maestro/articulos.csv'):
     
     # Guardar todo
     with open(master_file, 'w', newline='', encoding='utf-8-sig') as f:
-        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
+        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date', "link","authors", "doi"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(all_articles)
@@ -201,7 +201,7 @@ if __name__ == "__main__":
     
     # Guardar archivo del período - como el original pero con encoding mejorado
     with open(numbered_filename, 'w', newline='', encoding='utf-8-sig') as f:
-        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
+        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date', "link","authors", "doi"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(resultados)
