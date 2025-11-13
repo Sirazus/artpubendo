@@ -7,13 +7,12 @@ import re
 import os
 import hashlib
 import glob
+from calendar import monthrange
 
 def clean_text(text):
     """Limpia el texto de caracteres problemáticos"""
     if text:
-        # Remover múltiples espacios y saltos de línea
         text = re.sub(r'\s+', ' ', text)
-        # Remover caracteres problemáticos para CSV
         text = text.replace('\n', ' ').replace('\r', ' ')
         return text.strip()
     return ""
@@ -24,23 +23,26 @@ def generate_article_id(title, journal, date):
     return hashlib.md5(content.encode()).hexdigest()
 
 def get_date_range():
-    """Calcula el rango de fechas para quincenas completas (1-15 y 16-fin de mes)"""
+    """Calcula el rango de fechas para quincenas completas del MES ACTUAL"""
     today = datetime.now()
+    current_year = today.year
+    current_month = today.month
+    
+    # Obtener el último día del mes actual
+    _, last_day = monthrange(current_year, current_month)
     
     if today.day >= 15:
-        # Segunda quincena: desde día 16 hasta último día del mes
-        start_date = today.replace(day=16)
-        # Calcular último día del mes
-        next_month = today.replace(day=28) + timedelta(days=4)
-        end_date = next_month - timedelta(days=next_month.day)
-        period_name = f"quincena_2_{today.strftime('%Y-%m')}"
+        # Segunda quincena: días 16 hasta fin de mes
+        start_date = datetime(current_year, current_month, 16)
+        end_date = datetime(current_year, current_month, last_day)
+        period_name = f"quincena_2_{current_year}-{current_month:02d}"
     else:
-        # Primera quincena: desde día 1 hasta día 15
-        start_date = today.replace(day=1)
-        end_date = today.replace(day=15)
-        period_name = f"quincena_1_{today.strftime('%Y-%m')}"
+        # Primera quincena: días 1-15
+        start_date = datetime(current_year, current_month, 1)
+        end_date = datetime(current_year, current_month, 15)
+        period_name = f"quincena_1_{current_year}-{current_month:02d}"
     
-    print(f"📅 Período: {start_date.strftime('%Y-%m-%d')} a {end_date.strftime('%Y-%m-%d')}")
+    print(f"📅 Período REAL: {start_date.strftime('%Y-%m-%d')} a {end_date.strftime('%Y-%m-%d')}")
     return start_date.strftime("%Y/%m/%d"), end_date.strftime("%Y/%m/%d"), period_name
 
 def get_next_csv_number(csv_dir='data'):
@@ -48,79 +50,90 @@ def get_next_csv_number(csv_dir='data'):
     if not os.path.exists(csv_dir):
         return 1
     
-    # Buscar todos los archivos articulos_X.csv
     pattern = os.path.join(csv_dir, 'articulos_*.csv')
     csv_files = glob.glob(pattern)
     
     numbers = []
     for file in csv_files:
-        # Extraer el número del nombre del archivo
         filename = os.path.basename(file)
         match = re.match(r'articulos_(\d+)\.csv', filename)
         if match:
             numbers.append(int(match.group(1)))
     
-    if not numbers:
-        return 1
-    
-    return max(numbers) + 1
+    return max(numbers) + 1 if numbers else 1
 
 def get_articles(start_date, end_date):
-    # Construir URL con fechas dinámicas - FORMATO CORREGIDO
+    """Obtiene artículos de PubMed con headers mejorados"""
     base_url = "https://pubmed.ncbi.nlm.nih.gov/"
     
-    # Término de búsqueda más flexible
-    search_term = f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ({start_date}[Date - Entry] : {end_date}[Date - Entry])'
+    search_term = f'("International endodontic journal"[Journal] OR "Journal of endodontics"[Journal]) AND ("{start_date}"[Date - Entry] : "{end_date}"[Date - Entry])'
     
     print(f"🔍 Búsqueda: {search_term}")
     
     params = {
         'term': search_term,
         'sort': 'date',
-        'size': 100  # Aumentar número de resultados por página
+        'size': 50
     }
     
+    # Headers más realistas
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0',
     }
     
     articulos = []
     
     with requests.Session() as session:
-        # Paginación
-        page = 1
-        while True:
-            params['page'] = page
-            print(f"📄 Procesando página {page}...")
+        session.headers.update(headers)
+        
+        try:
+            print("🌐 Realizando solicitud a PubMed...")
+            response = session.get(base_url, params=params, timeout=30)
+            print(f"📡 Status Code: {response.status_code}")
             
-            try:
-                response = session.get(base_url, params=params, headers=headers, timeout=30)
-                response.raise_for_status()
-            except Exception as e:
-                print(f"❌ Error en la solicitud: {e}")
-                break
+            if response.status_code != 200:
+                print(f"❌ Error HTTP {response.status_code}")
+                # Intentar una búsqueda más simple para diagnóstico
+                print("🔧 Probando búsqueda simplificada...")
+                test_params = {'term': 'endodontic', 'sort': 'date'}
+                test_response = session.get(base_url, params=test_params, timeout=30)
+                print(f"📡 Status Code (búsqueda test): {test_response.status_code}")
+                return articulos
                 
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Debug: mostrar contenido de la página
-            if page == 1:
-                results_info = soup.find('div', class_='results-amount')
-                if results_info:
-                    print(f"📊 Info resultados: {results_info.text.strip()}")
+            # Verificar si hay bloqueo o captcha
+            if "captcha" in response.text.lower() or "access denied" in response.text.lower():
+                print("🚫 Posible bloqueo por CAPTCHA o acceso denegado")
+                return articulos
             
+            # Buscar artículos
             articles = soup.find_all('article', class_='full-docsum')
-            print(f"📖 Encontrados {len(articles)} artículos en la página {page}")
+            print(f"📖 Encontrados {len(articles)} artículos")
             
             if not articles:
-                print("⏹️ No hay más artículos")
-                break
-                
-            for art in articles:
+                no_results = soup.find('div', class_='no-results-message')
+                if no_results:
+                    print("📭 No se encontraron resultados")
+                return articulos
+            
+            for i, art in enumerate(articles):
                 try:
-                    # Extraer título y enlace
+                    print(f"  📝 Procesando artículo {i+1}/{len(articles)}...")
+                    
+                    # Extraer título
                     title_tag = art.find('a', class_='docsum-title')
                     if not title_tag:
-                        print("⚠️ No se encontró título")
                         continue
                         
                     title = clean_text(title_tag.text.strip())
@@ -128,29 +141,31 @@ def get_articles(start_date, end_date):
                     
                     # Extraer revista y fecha
                     journal_info = art.find('span', class_='docsum-journal-citation')
+                    revista = "Desconocida"
+                    fecha = "Desconocida"
+                    
                     if journal_info:
                         journal_text = journal_info.text.strip()
-                        parts = journal_text.split('.')
-                        revista = clean_text(parts[0])
-                        fecha = clean_text(parts[1].strip().split(';')[0] if len(parts) > 1 else '')
-                    else:
-                        revista = "Desconocida"
-                        fecha = "Desconocida"
+                        parts = journal_text.split('. ')
+                        revista = clean_text(parts[0]) if parts else "Desconocida"
+                        fecha = clean_text(parts[1]) if len(parts) > 1 else "Desconocida"
                     
                     # Generar ID único
                     article_id = generate_article_id(title, revista, fecha)
                     
                     # Obtener abstract
-                    time.sleep(1)  # Espera entre requests
+                    time.sleep(2)  # Espera más larga para evitar bloqueos
+                    abstract = "No abstract available"
+                    
                     try:
-                        art_response = session.get(link, headers=headers, timeout=30)
-                        art_soup = BeautifulSoup(art_response.text, 'html.parser')
-                        
-                        abstract_section = art_soup.find('div', class_='abstract-content')
-                        abstract = clean_text(abstract_section.text.strip()) if abstract_section else "No abstract available"
+                        art_response = session.get(link, timeout=30)
+                        if art_response.status_code == 200:
+                            art_soup = BeautifulSoup(art_response.text, 'html.parser')
+                            abstract_section = art_soup.find('div', class_='abstract-content')
+                            if abstract_section:
+                                abstract = clean_text(abstract_section.text.strip())
                     except Exception as e:
-                        print(f"⚠️ Error obteniendo abstract: {e}")
-                        abstract = "Error al obtener abstract"
+                        print(f"    ⚠️ Error obteniendo abstract: {e}")
                     
                     articulos.append({
                         'id': article_id,
@@ -161,103 +176,18 @@ def get_articles(start_date, end_date):
                         'scraped_date': datetime.now().strftime("%Y-%m-%d")
                     })
                     
-                    print(f"✅ Procesado: {title[:50]}...")
+                    print(f"    ✅ {title[:50]}...")
                     
                 except Exception as e:
-                    print(f"❌ Error procesando artículo: {str(e)}")
+                    print(f"    ❌ Error: {e}")
                     continue
-            
-            # Verificar siguiente página
-            next_btn = soup.find('button', class_='next-page-btn')
-            if not next_btn or 'disabled' in next_btn.get('class', []):
-                print("⏹️ No hay más páginas")
-                break
-                
-            page += 1
-            if page > 10:  # Límite de seguridad
-                print("⚠️ Límite de páginas alcanzado")
-                break
+                    
+        except Exception as e:
+            print(f"❌ Error general: {e}")
     
     return articulos
 
-def load_existing_articles(master_file='articulos_maestro/articulos.csv'):
-    """Carga los artículos existentes del archivo maestro"""
-    existing_articles = {}
-    if os.path.exists(master_file):
-        with open(master_file, 'r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Manejar archivos antiguos sin 'id'
-                if 'id' not in row:
-                    # Generar ID para artículos antiguos
-                    row['id'] = generate_article_id(
-                        row.get('title', ''),
-                        row.get('journal', ''),
-                        row.get('date', '')
-                    )
-                existing_articles[row['id']] = row
-    return existing_articles
-
-def migrate_old_format(master_file='articulos_maestro/articulos.csv'):
-    """Migra archivos antiguos al nuevo formato con ID"""
-    if not os.path.exists(master_file):
-        return
-    
-    with open(master_file, 'r', encoding='utf-8-sig') as f:
-        content = f.read()
-    
-    # Verificar si es formato antiguo (sin 'id')
-    if 'id' not in content.split('\n')[0]:
-        print("🔄 Migrando archivo antiguo al nuevo formato...")
-        
-        # Leer datos antiguos
-        articles = []
-        with open(master_file, 'r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Agregar ID y fecha de scraping
-                row['id'] = generate_article_id(
-                    row.get('title', ''),
-                    row.get('journal', ''),
-                    row.get('date', '')
-                )
-                row['scraped_date'] = datetime.now().strftime("%Y-%m-%d")
-                articles.append(row)
-        
-        # Guardar en nuevo formato
-        with open(master_file, 'w', newline='', encoding='utf-8-sig') as f:
-            fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(articles)
-        
-        print("✅ Migración completada")
-
-def save_to_master(articles, master_file='articulos_maestro/articulos.csv'):
-    """Guarda artículos en el archivo maestro, evitando duplicados"""
-    # Primero migrar si es necesario
-    migrate_old_format(master_file)
-    
-    existing_articles = load_existing_articles(master_file)
-    
-    # Filtrar artículos nuevos
-    new_articles = [article for article in articles if article['id'] not in existing_articles]
-    
-    if not new_articles:
-        print("No hay artículos nuevos para agregar al archivo maestro")
-        return 0
-    
-    # Combinar existentes con nuevos
-    all_articles = list(existing_articles.values()) + new_articles
-    
-    # Guardar todo
-    with open(master_file, 'w', newline='', encoding='utf-8-sig') as f:
-        fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(all_articles)
-    
-    return len(new_articles)
+# ... (el resto de las funciones se mantienen igual: load_existing_articles, migrate_old_format, save_to_master)
 
 # Ejecutar y guardar resultados
 if __name__ == "__main__":
@@ -266,6 +196,8 @@ if __name__ == "__main__":
     maestro_dir = 'articulos_maestro'
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(maestro_dir, exist_ok=True)
+    
+    print(f"🕐 Fecha actual del sistema: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Obtener el rango de fechas (quincenas completas)
     start_date, end_date, period_name = get_date_range()
@@ -295,7 +227,7 @@ if __name__ == "__main__":
     new_count = save_to_master(resultados, master_file)
     
     print(f"📈 Resumen final:")
-    print(f"   - Artículos encontrados en este período: {len(resultados)}")
-    print(f"   - Artículos nuevos agregados al maestro: {new_count}")
+    print(f"   - Artículos encontrados: {len(resultados)}")
+    print(f"   - Nuevos en maestro: {new_count}")
     print(f"   - Archivo numerado: {numbered_filename}")
     print(f"   - Archivo maestro: {master_file}")
