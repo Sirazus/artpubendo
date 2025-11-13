@@ -36,8 +36,8 @@ jobs:
         with:
           commit_message: "Actualizar artículos - $(date +'%Y-%m-%d')"
           file_pattern: |
-            data/articulos*.csv
-            data/articulos.csv
+            data/articulos_*.csv
+            articulos_maestro/articulos.csv
           commit_user_name: GitHub Actions
           commit_user_email: actions@github.com
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -46,4 +46,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: articulos-csv
-          path: data/
+          path: |
+            data/
+            articulos_maestro/
