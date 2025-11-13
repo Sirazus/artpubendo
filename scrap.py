@@ -24,19 +24,46 @@ def generate_article_id(title, journal, date):
     return hashlib.md5(content.encode()).hexdigest()
 
 def get_date_range():
-    """Calcula el rango de fechas para el día 1 o 15 del mes actual"""
+    """Calcula el rango de fechas para quincenas completas (1-15 y 16-fin de mes)"""
     today = datetime.now()
     
     if today.day >= 15:
-        # Si estamos después del día 15, buscar desde día 15 hasta hoy
-        start_date = today.replace(day=15)
-        period_name = f"{start_date.strftime('%Y-%m-%d')}_to_{today.strftime('%Y-%m-%d')}"
+        # Segunda quincena: desde día 16 hasta último día del mes
+        start_date = today.replace(day=16)
+        # Calcular último día del mes
+        next_month = today.replace(day=28) + timedelta(days=4)
+        end_date = next_month - timedelta(days=next_month.day)
+        period_name = f"quincena_2_{today.strftime('%Y-%m')}"
     else:
-        # Si estamos antes del día 15, buscar desde día 1 hasta hoy
+        # Primera quincena: desde día 1 hasta día 15
         start_date = today.replace(day=1)
-        period_name = f"{start_date.strftime('%Y-%m-%d')}_to_{today.strftime('%Y-%m-%d')}"
+        end_date = today.replace(day=15)
+        period_name = f"quincena_1_{today.strftime('%Y-%m')}"
     
-    return start_date.strftime("%Y/%m/%d"), today.strftime("%Y/%m/%d"), period_name
+    print(f"📅 Período: {start_date.strftime('%Y-%m-%d')} a {end_date.strftime('%Y-%m-%d')}")
+    return start_date.strftime("%Y/%m/%d"), end_date.strftime("%Y/%m/%d"), period_name
+
+def get_next_csv_number(csv_dir='data'):
+    """Encuentra el siguiente número para articulos_X.csv"""
+    if not os.path.exists(csv_dir):
+        return 1
+    
+    # Buscar todos los archivos articulos_X.csv
+    pattern = os.path.join(csv_dir, 'articulos_*.csv')
+    csv_files = glob.glob(pattern)
+    
+    numbers = []
+    for file in csv_files:
+        # Extraer el número del nombre del archivo
+        filename = os.path.basename(file)
+        match = re.match(r'articulos_(\d+)\.csv', filename)
+        if match:
+            numbers.append(int(match.group(1)))
+    
+    if not numbers:
+        return 1
+    
+    return max(numbers) + 1
 
 def get_articles(start_date, end_date):
     # Construir URL con fechas dinámicas
@@ -113,7 +140,7 @@ def get_articles(start_date, end_date):
     
     return articulos
 
-def load_existing_articles(master_file='data/articulos.csv'):
+def load_existing_articles(master_file='articulos_maestro/articulos.csv'):
     """Carga los artículos existentes del archivo maestro"""
     existing_articles = {}
     if os.path.exists(master_file):
@@ -131,7 +158,7 @@ def load_existing_articles(master_file='data/articulos.csv'):
                 existing_articles[row['id']] = row
     return existing_articles
 
-def migrate_old_format(master_file='data/articulos.csv'):
+def migrate_old_format(master_file='articulos_maestro/articulos.csv'):
     """Migra archivos antiguos al nuevo formato con ID"""
     if not os.path.exists(master_file):
         return
@@ -166,7 +193,7 @@ def migrate_old_format(master_file='data/articulos.csv'):
         
         print("✅ Migración completada")
 
-def save_to_master(articles, master_file='data/articulos.csv'):
+def save_to_master(articles, master_file='articulos_maestro/articulos.csv'):
     """Guarda artículos en el archivo maestro, evitando duplicados"""
     # Primero migrar si es necesario
     migrate_old_format(master_file)
@@ -192,60 +219,39 @@ def save_to_master(articles, master_file='data/articulos.csv'):
     
     return len(new_articles)
 
-def cleanup_old_period_files(data_dir='data'):
-    """Elimina archivos de períodos anteriores, manteniendo solo el más reciente"""
-    if not os.path.exists(data_dir):
-        return
-    
-    # Buscar todos los archivos de período
-    period_files = glob.glob(os.path.join(data_dir, 'articulos_*_to_*.csv'))
-    
-    if not period_files:
-        return
-    
-    # Ordenar por fecha de modificación (más reciente primero)
-    period_files.sort(key=os.path.getmtime, reverse=True)
-    
-    # Mantener solo el más reciente, eliminar los demás
-    for old_file in period_files[1:]:
-        try:
-            os.remove(old_file)
-            print(f"🗑️  Eliminado archivo anterior: {os.path.basename(old_file)}")
-        except Exception as e:
-            print(f"❌ Error eliminando {old_file}: {e}")
-
 # Ejecutar y guardar resultados
 if __name__ == "__main__":
-    # Crear carpeta data si no existe
+    # Crear carpetas si no existen
     data_dir = 'data'
+    maestro_dir = 'articulos_maestro'
     os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(maestro_dir, exist_ok=True)
     
-    # Obtener el rango de fechas según el día del mes
+    # Obtener el rango de fechas (quincenas completas)
     start_date, end_date, period_name = get_date_range()
     
     print(f"Buscando artículos desde {start_date} hasta {end_date}")
     
     resultados = get_articles(start_date, end_date)
     
-    # 1. Limpiar archivos de períodos anteriores
-    cleanup_old_period_files(data_dir)
+    # 1. Crear archivo numerado articulos_X.csv en carpeta data/
+    next_number = get_next_csv_number(data_dir)
+    numbered_filename = os.path.join(data_dir, f"articulos_{next_number}.csv")
     
-    # 2. Crear archivo específico del período
-    period_filename = os.path.join(data_dir, f"articulos_{period_name}.csv")
-    with open(period_filename, 'w', newline='', encoding='utf-8-sig') as f:
+    with open(numbered_filename, 'w', newline='', encoding='utf-8-sig') as f:
         fieldnames = ['id', 'title', 'journal', 'date', 'abstract', 'scraped_date']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(resultados)
     
-    print(f"✓ Archivo del período guardado: {period_filename}")
+    print(f"✓ Archivo numerado guardado: {numbered_filename}")
     
-    # 3. Agregar al archivo maestro
-    master_file = os.path.join(data_dir, 'articulos.csv')
+    # 2. Agregar al archivo maestro en carpeta articulos_maestro/
+    master_file = os.path.join(maestro_dir, 'articulos.csv')
     new_count = save_to_master(resultados, master_file)
     
     print(f"✓ Se encontraron {len(resultados)} artículos en este período")
     print(f"✓ Se agregaron {new_count} artículos nuevos al archivo maestro")
-    print(f"✓ Archivos guardados en carpeta 'data/':")
-    print(f"   - articulos_{period_name}.csv (período actual)")
-    print(f"   - articulos.csv (maestro acumulativo)")
+    print(f"✓ Archivos guardados:")
+    print(f"   - {numbered_filename} (nuevo archivo numerado)")
+    print(f"   - {master_file} (maestro acumulativo)")
